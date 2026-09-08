@@ -10,13 +10,23 @@ from preprocess import CODE_LENGTH, IMAGE_SIZE, encode_code, load_image
 
 
 class SealDataset(Dataset):
-    def __init__(self, manifest: str | Path, image_dir: str | Path, augment: bool = False) -> None:
+    def __init__(
+        self,
+        manifest: str | Path,
+        image_dir: str | Path,
+        augment: bool = False,
+        max_samples: int | None = None,
+    ) -> None:
         self.manifest = Path(manifest)
         self.image_dir = Path(image_dir)
         self.augment = augment
+        if max_samples is not None and max_samples <= 0:
+            raise ValueError("max_samples must be positive or None")
         if not self.manifest.exists():
             raise FileNotFoundError(f"Manifest does not exist: {self.manifest}")
         self.samples = self._read_manifest()
+        if max_samples is not None:
+            self.samples = self.samples[:max_samples]
         if not self.samples:
             raise ValueError(f"Manifest contains no available image samples: {self.manifest}")
 

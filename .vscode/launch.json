@@ -10,12 +10,8 @@
             "cwd": "${workspaceFolder}",
             "python": "${workspaceFolder}/.venv/bin/python",
             "args": [
-                "--epochs",
-                "1",
-                "--batch-size",
-                "32",
-                "--output",
-                "${workspaceFolder}/artifacts/seal_code_cnn.pt"
+                "--config",
+                "${workspaceFolder}/config.json"
             ],
             "justMyCode": true
         },
@@ -29,7 +25,9 @@
             "python": "${workspaceFolder}/.venv/bin/python",
             "args": [
                 "--checkpoint",
-                "${workspaceFolder}/artifacts/seal_code_cnn.pt"
+                "${workspaceFolder}/artifacts/seal_code_cnn.pt",
+                "--config",
+                "${workspaceFolder}/config.json"
             ],
             "justMyCode": true
         },
@@ -46,8 +44,8 @@
                 "${workspaceFolder}/data/val",
                 "--output-dir",
                 "${workspaceFolder}/artifacts",
-                "--checkpoint",
-                "${workspaceFolder}/artifacts/seal_code_cnn.pt"
+                "--config",
+                "${workspaceFolder}/config.json"
             ],
             "justMyCode": true
         }

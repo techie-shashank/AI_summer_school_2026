@@ -9,6 +9,7 @@ from torch.utils.data import DataLoader
 
 from data_pipeline import SealDataset
 from models.cnn import SealCodeCNN
+from pipeline_config import DEFAULT_CONFIG, config_path, load_config, resolve_device
 from preprocess import CODE_LENGTH
 
 
@@ -44,27 +45,47 @@ def run_epoch(model, loader, criterion, device, optimizer=None):
 
 def main() -> None:
 	parser = argparse.ArgumentParser(description="Train the baseline seal-code CNN on train/val data.")
-	parser.add_argument("--data-root", type=Path, default=ROOT / "data")
-	parser.add_argument("--manifest-root", type=Path, default=ROOT / "data/splits/split_seals")
-	parser.add_argument("--output", type=Path, default=ROOT / "artifacts/seal_code_cnn.pt")
-	parser.add_argument("--epochs", type=int, default=10)
-	parser.add_argument("--batch-size", type=int, default=32)
-	parser.add_argument("--learning-rate", type=float, default=1e-3)
-	parser.add_argument("--workers", type=int, default=0)
+	parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+	parser.add_argument("--data-root", type=Path)
+	parser.add_argument("--manifest-root", type=Path)
+	parser.add_argument("--output", type=Path)
+	parser.add_argument("--train-samples", type=int)
+	parser.add_argument("--validation-samples", type=int)
+	parser.add_argument("--epochs", type=int)
+	parser.add_argument("--batch-size", type=int)
+	parser.add_argument("--learning-rate", type=float)
+	parser.add_argument("--device", choices=("cpu", "gpu"))
 	args = parser.parse_args()
+	config = load_config(args.config)
+	config_root = args.config.resolve().parent
+	data_root = config_path(args.data_root or config.get("data_root", "data"), config_root)
+	manifest_root = config_path(
+		args.manifest_root or config.get("manifest_root", "data/splits/split_seals"),
+		config_root,
+	)
+	output = config_path(args.output or config.get("checkpoint", "artifacts/seal_code_cnn.pt"), config_root)
+	train_samples = args.train_samples if args.train_samples is not None else config.get("train_samples")
+	validation_samples = (
+		args.validation_samples
+		if args.validation_samples is not None
+		else config.get("validation_samples")
+	)
+	epochs = args.epochs if args.epochs is not None else config.get("epochs", 10)
+	batch_size = args.batch_size if args.batch_size is not None else config.get("batch_size", 32)
+	learning_rate = args.learning_rate if args.learning_rate is not None else config.get("learning_rate", 1e-3)
+	device = resolve_device(args.device or config.get("device", "gpu"))
 
-	train_set = SealDataset(args.manifest_root / "train.csv", args.data_root / "train", augment=True)
-	val_set = SealDataset(args.manifest_root / "val.csv", args.data_root / "val")
-	train_loader = DataLoader(train_set, args.batch_size, shuffle=True, num_workers=args.workers)
-	val_loader = DataLoader(val_set, args.batch_size, shuffle=False, num_workers=args.workers)
-	device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+	train_set = SealDataset(manifest_root / "train.csv", data_root / "train", augment=True, max_samples=train_samples)
+	val_set = SealDataset(manifest_root / "val.csv", data_root / "val", max_samples=validation_samples)
+	train_loader = DataLoader(train_set, batch_size, shuffle=True)
+	val_loader = DataLoader(val_set, batch_size, shuffle=False)
 	model = SealCodeCNN(CODE_LENGTH).to(device)
-	optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
+	optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 	criterion = nn.CrossEntropyLoss()
 	best_exact = -1.0
 
 	print(f"Training on {device} with {len(train_set)} train and {len(val_set)} validation samples")
-	for epoch in range(1, args.epochs + 1):
+	for epoch in range(1, epochs + 1):
 		train_loss, train_digit, train_exact = run_epoch(model, train_loader, criterion, device, optimizer)
 		val_loss, val_digit, val_exact = run_epoch(model, val_loader, criterion, device)
 		print(
@@ -73,9 +94,9 @@ def main() -> None:
 		)
 		if val_exact > best_exact:
 			best_exact = val_exact
-			args.output.parent.mkdir(parents=True, exist_ok=True)
-			torch.save({"model": model.state_dict(), "code_length": CODE_LENGTH}, args.output)
-			print(f"Saved best checkpoint to {args.output}")
+			output.parent.mkdir(parents=True, exist_ok=True)
+			torch.save({"model": model.state_dict(), "code_length": CODE_LENGTH}, output)
+			print(f"Saved best checkpoint to {output}")
 
 
 if __name__ == "__main__":

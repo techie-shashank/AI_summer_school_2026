@@ -26,6 +26,7 @@ computer vision and multimodal LLM approaches are not implemented yet.
 	runs
 
 The required Python packages are listed in [requirements.txt](requirements.txt).
+Training and validation defaults are stored in [config.json](config.json).
 
 ## Installation
 
@@ -82,29 +83,45 @@ meaningful results.
 
 ## Training
 
+Edit `config.json` to choose how many locally available samples to use:
+
+```json
+{
+	"train_samples": 10,
+	"validation_samples": 5,
+	"epochs": 10,
+	"batch_size": 32,
+	"learning_rate": 0.001,
+	"device": "gpu"
+}
+```
+
+Set either value to `null` to use every available image in that split. The
+limits are applied after missing manifest images are skipped. When the full
+dataset is downloaded, setting both values to `null` uses all samples.
+
 Activate the virtual environment, then run a short smoke training run:
 
 ```bash
-python train.py \
-	--epochs 1 \
-	--batch-size 32 \
-	--output artifacts/seal_code_cnn.pt
+python train.py --config config.json --epochs 1
 ```
 
 Run a normal baseline training session with:
 
 ```bash
-python train.py \
-	--epochs 10 \
-	--batch-size 32 \
-	--learning-rate 0.001 \
-	--output artifacts/seal_code_cnn.pt
+python train.py --config config.json
 ```
 
-The script automatically selects CUDA when available and otherwise uses the
-CPU. It prints training and validation loss, per-digit accuracy, and exact-code
+The `device` setting controls execution. Use `"gpu"` to use CUDA when it is
+available, or `"cpu"` to force CPU execution. If `"gpu"` is configured but
+CUDA is unavailable, the pipeline warns and falls back to CPU. The script
+prints training and validation loss, per-digit accuracy, and exact-code
 accuracy after each epoch. The checkpoint is saved whenever validation
 exact-code accuracy improves.
+
+Command-line options such as `--train-samples`, `--validation-samples`,
+`--epochs`, and `--batch-size` override values from `config.json` for a single
+run.
 
 Useful training options:
 
@@ -115,7 +132,7 @@ Useful training options:
 --epochs          Number of training epochs
 --batch-size      Number of images per batch
 --learning-rate   Adam learning rate
---workers         DataLoader worker processes
+--device          Execution device: cpu or gpu
 ```
 
 For help:
@@ -129,8 +146,7 @@ python train.py --help
 Evaluate a saved checkpoint on the available validation images:
 
 ```bash
-python evaluation.py \
-	--checkpoint artifacts/seal_code_cnn.pt
+python evaluation.py --config config.json
 ```
 
 The evaluator reports:

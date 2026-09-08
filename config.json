@@ -1,0 +1,11 @@
+{
+    "data_root": "data",
+    "manifest_root": "data/splits/split_seals",
+    "checkpoint": "artifacts/seal_code_cnn.pt",
+    "train_samples": 10,
+    "validation_samples": 5,
+    "epochs": 10,
+    "batch_size": 32,
+    "learning_rate": 0.001,
+    "device": "gpu"
+}
