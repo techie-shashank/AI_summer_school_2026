@@ -18,16 +18,26 @@ class SealDataset(Dataset):
             raise FileNotFoundError(f"Manifest does not exist: {self.manifest}")
         self.samples = self._read_manifest()
         if not self.samples:
-            raise ValueError(f"Manifest contains no samples: {self.manifest}")
+            raise ValueError(f"Manifest contains no available image samples: {self.manifest}")
 
     def _read_manifest(self) -> list[tuple[Path, torch.Tensor]]:
         samples = []
+        missing = 0
         with self.manifest.open(newline="", encoding="utf-8") as handle:
             reader = csv.DictReader(handle, delimiter=";")
             if reader.fieldnames != ["filename", "number"]:
                 raise ValueError(f"Expected columns filename;number in {self.manifest}")
             for row in reader:
-                samples.append((self.image_dir / row["filename"], encode_code(row["number"], CODE_LENGTH)))
+                image_path = self.image_dir / row["filename"]
+                if not image_path.is_file():
+                    missing += 1
+                    continue
+                samples.append((image_path, encode_code(row["number"], CODE_LENGTH)))
+
+        if missing:
+            print(
+                f"Warning: skipped {missing} missing images referenced by {self.manifest}"
+            )
         return samples
 
     def __len__(self) -> int:
