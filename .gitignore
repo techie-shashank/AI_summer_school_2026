@@ -187,6 +187,7 @@ tensorboard/
 # Operating system and editor files
 .DS_Store
 Thumbs.db
+.vscode/
 .vscode/settings.json
 .spyderproject
 .spyproject
