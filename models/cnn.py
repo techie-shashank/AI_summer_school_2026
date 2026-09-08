@@ -19,8 +19,8 @@ class SealCodeCNN(nn.Module):
 			nn.MaxPool2d(2),
 			nn.Conv2d(32, 64, kernel_size=3, padding=1),
 			nn.ReLU(inplace=True),
-			nn.AdaptiveAvgPool2d((1, code_length)),
 		)
+		self.pool = nn.AdaptiveAvgPool2d((1, code_length))
 		self.classifier = nn.Sequential(
 			nn.Flatten(),
 			nn.Dropout(0.2),
@@ -29,5 +29,13 @@ class SealCodeCNN(nn.Module):
 		self.classes = classes
 
 	def forward(self, images: torch.Tensor) -> torch.Tensor:
-		logits = self.classifier(self.features(images))
+		features = self.features(images)
+		if features.device.type == "mps":
+			# AdaptiveAvgPool2d with a non-divisible output size isn't
+			# supported on MPS yet; the feature map is small at this point,
+			# so the CPU round-trip is cheap.
+			features = self.pool(features.cpu()).to(features.device)
+		else:
+			features = self.pool(features)
+		logits = self.classifier(features)
 		return logits.view(images.shape[0], self.code_length, self.classes)

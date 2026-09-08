@@ -33,8 +33,10 @@ def resolve_device(value: str | None) -> torch.device:
     requested = (value or "gpu").lower()
     if requested not in {"cpu", "gpu"}:
         raise ValueError("device must be either 'cpu' or 'gpu'")
-    if requested == "gpu" and torch.cuda.is_available():
-        return torch.device("cuda")
     if requested == "gpu":
-        print("Warning: GPU requested but CUDA is unavailable; using CPU")
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        if torch.backends.mps.is_available():
+            return torch.device("mps")
+        print("Warning: GPU requested but no CUDA/MPS device is available; using CPU")
     return torch.device("cpu")
