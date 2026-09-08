@@ -158,6 +158,38 @@ env.bak/
 venv.bak/
 
 # Spyder project settings
+.spyproject/
+
+# Local Python environments
+.venv/
+.python-version
+
+# Training outputs and model checkpoints
+artifacts/
+checkpoints/
+outputs/
+*.pt
+*.pth
+*.ckpt
+*.onnx
+
+# Experiment logs
+runs/
+wandb/
+tensorboard/
+*.log
+
+# Local secrets and configuration
+.env
+.env.*
+!.env.example
+
+# Operating system and editor files
+.DS_Store
+Thumbs.db
+.vscode/settings.json
+.vscode/launch.json
+.vscode/tasks.json
 .spyderproject
 .spyproject
 
@@ -216,3 +248,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+
+/data

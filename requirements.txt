@@ -1,0 +1,18 @@
+# Python 3.10+
+
+# CNN/runtime dependencies
+torch
+torchvision
+torchaudio
+opencv-python
+numpy
+
+# LLM helpers in llm/common_llm.py
+openai>=1.0
+ollama>=0.3
+pydantic>=2.0
+httpx>=0.24
+
+# Image helper used by scripts/seal_digits_dataset.py
+Pillow>=9.0
+
