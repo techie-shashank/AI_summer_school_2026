@@ -12,6 +12,7 @@ openai>=1.0
 ollama>=0.3
 pydantic>=2.0
 httpx>=0.24
+python-dotenv>=1.0
 
 # Image helper used by scripts/seal_digits_dataset.py
 Pillow>=9.0

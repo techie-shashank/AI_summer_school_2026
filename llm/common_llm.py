@@ -11,7 +11,7 @@ import json
 
 class AnswerLLM(BaseModel):
     response: str
-    seal_number: int
+    seal_number: str
     note: Optional[str] = None
 
 def encode_image(image_path):
@@ -178,7 +178,8 @@ def call_llm(image_path, command, prompt, openai=True, openai_api_key=None,
     return answer_dict
 
 def call_llm_on_fly(image, command, prompt, openai=True, openai_api_key=None,
-             kky_ollama_uname=None, kky_ollama_password=None, kky_ollama_server=None): 
+             kky_ollama_uname=None, kky_ollama_password=None, kky_ollama_server=None,
+             model='gemma3:12b'):
 
     answer_dict = {}
 
@@ -199,7 +200,7 @@ def call_llm_on_fly(image, command, prompt, openai=True, openai_api_key=None,
         client = Client(
             host=kky_ollama_server,
             auth=DigestAuth(
-                kky_ollama_uname, 
+                kky_ollama_uname,
                 kky_ollama_password
             ),
         )
@@ -208,7 +209,8 @@ def call_llm_on_fly(image, command, prompt, openai=True, openai_api_key=None,
             client,
             image=image,
             command=command,
-            prompt=prompt
+            prompt=prompt,
+            model=model,
         )
         answer_dict = json.loads(answer)
 
