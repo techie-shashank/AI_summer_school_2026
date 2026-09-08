@@ -188,8 +188,6 @@ tensorboard/
 .DS_Store
 Thumbs.db
 .vscode/settings.json
-.vscode/launch.json
-.vscode/tasks.json
 .spyderproject
 .spyproject
 

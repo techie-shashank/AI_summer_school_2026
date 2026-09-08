@@ -1,0 +1,55 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Train CNN",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/train.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "python": "${workspaceFolder}/.venv/bin/python",
+            "args": [
+                "--epochs",
+                "1",
+                "--batch-size",
+                "32",
+                "--output",
+                "${workspaceFolder}/artifacts/seal_code_cnn.pt"
+            ],
+            "justMyCode": true
+        },
+        {
+            "name": "Evaluate CNN",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/evaluation.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "python": "${workspaceFolder}/.venv/bin/python",
+            "args": [
+                "--checkpoint",
+                "${workspaceFolder}/artifacts/seal_code_cnn.pt"
+            ],
+            "justMyCode": true
+        },
+        {
+            "name": "Run Inference",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/main.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "python": "${workspaceFolder}/.venv/bin/python",
+            "args": [
+                "--input-dir",
+                "${workspaceFolder}/data/val",
+                "--output-dir",
+                "${workspaceFolder}/artifacts",
+                "--checkpoint",
+                "${workspaceFolder}/artifacts/seal_code_cnn.pt"
+            ],
+            "justMyCode": true
+        }
+    ]
+}
