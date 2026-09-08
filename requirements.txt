@@ -17,3 +17,7 @@ python-dotenv>=1.0
 # Image helper used by scripts/seal_digits_dataset.py
 Pillow>=9.0
 
+# Classical CV pipeline in models/classical.py
+scikit-image>=0.20
+scikit-learn>=1.3
+
