@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import pickle
 from pathlib import Path
 from typing import Optional
@@ -18,6 +19,8 @@ ROOT = Path(__file__).resolve().parent.parent
 DIGIT_CANVAS_SIZE = 32
 DEFAULT_CLASSIFIER_PATH = ROOT / "artifacts" / "classical_digit_svm.pkl"
 DEFAULT_DIGIT_DATASET = ROOT / "data" / "ground_truth_chars_balanced"
+DEFAULT_SEAL_MANIFEST = ROOT / "data" / "splits" / "split_seals" / "train.csv"
+DEFAULT_SEAL_IMAGE_DIR = ROOT / "data" / "train"
 DIGIT_EXTENSIONS = {".tif", ".tiff", ".png", ".jpg", ".jpeg"}
 
 
@@ -81,12 +84,17 @@ def segment_digits(image_path: str | Path, code_length: int = CODE_LENGTH) -> li
 	num_labels, _, stats, _ = cv2.connectedComponentsWithStats(clean, connectivity=8)
 	image_area = image.shape[0] * image.shape[1]
 
+	# Digits can appear at very different scales depending on how close the
+	# seal was photographed, so we filter by shape (tall and narrow, like a
+	# digit) rather than an absolute pixel area; only drop specks (noise)
+	# and huge blobs (background artwork), then let the height-grouping
+	# below find the actual row of matching-size digits.
 	candidates = []
 	for i in range(1, num_labels):
 		x, y, w, h, area = stats[i]
-		if not (0.0005 * image_area <= area <= 0.02 * image_area):
+		if not (30 <= area <= 0.05 * image_area):
 			continue
-		if h <= w:  # digits are taller than they are wide
+		if h <= w or h > 8 * w:
 			continue
 		candidates.append((x, y, w, h))
 
@@ -156,12 +164,58 @@ def _load_digit_dataset(dataset_dir: str | Path) -> tuple[np.ndarray, np.ndarray
 	return np.stack(features), np.array(labels)
 
 
+def _load_manifest_digit_dataset(
+	manifest_path: str | Path,
+	image_dir: str | Path,
+	code_length: int = CODE_LENGTH,
+) -> tuple[np.ndarray, np.ndarray]:
+	"""Self-label digits by segmenting seal photos with a known ground-truth
+	code, so the classifier also trains on digits that look like the ones it
+	will actually see at inference time (not just the clean reference set).
+	"""
+	with open(manifest_path, newline="", encoding="utf-8") as handle:
+		rows = list(csv.DictReader(handle, delimiter=";"))
+
+	features, labels = [], []
+	skipped = 0
+	for i, row in enumerate(rows, start=1):
+		image_path = Path(image_dir) / row["filename"]
+		code = row["number"].strip().zfill(code_length)
+		if image_path.is_file():
+			try:
+				digits = segment_digits(image_path, code_length)
+			except ValueError:
+				digits = None
+		else:
+			digits = None
+		if digits is None:
+			skipped += 1
+		else:
+			for digit_image, label in zip(digits, code):
+				features.append(extract_features(digit_image))
+				labels.append(label)
+		if i % 1000 == 0 or i == len(rows):
+			print(f"Segmented {i}/{len(rows)} seal photos ({skipped} skipped so far)")
+	return np.stack(features), np.array(labels)
+
+
 def train_classifier(
 	dataset_dir: str | Path = DEFAULT_DIGIT_DATASET,
+	seal_manifest: str | Path = DEFAULT_SEAL_MANIFEST,
+	seal_image_dir: str | Path = DEFAULT_SEAL_IMAGE_DIR,
 	output_path: str | Path = DEFAULT_CLASSIFIER_PATH,
 ) -> None:
-	"""Fit the digit classifier on the individually-cropped digit dataset."""
-	features, labels = _load_digit_dataset(dataset_dir)
+	"""Fit the digit classifier on clean reference digits plus digits
+	self-labeled by segmenting real seal photos with a known code."""
+	clean_features, clean_labels = _load_digit_dataset(dataset_dir)
+	print(f"Loaded {len(clean_labels)} clean reference digits from {dataset_dir}")
+
+	seal_features, seal_labels = _load_manifest_digit_dataset(seal_manifest, seal_image_dir)
+	print(f"Segmented {len(seal_labels)} digits from real seal photos in {seal_manifest}")
+
+	features = np.concatenate([clean_features, seal_features])
+	labels = np.concatenate([clean_labels, seal_labels])
+
 	x_train, x_val, y_train, y_val = train_test_split(
 		features, labels, test_size=0.2, stratify=labels, random_state=42
 	)

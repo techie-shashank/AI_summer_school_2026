@@ -4,7 +4,7 @@
     "checkpoint": "artifacts/seal_code_cnn.pt",
     "train_samples": null,
     "validation_samples": null,
-    "epochs": 10,
+    "epochs": 50,
     "batch_size": 32,
     "learning_rate": 0.001,
     "device": "gpu"

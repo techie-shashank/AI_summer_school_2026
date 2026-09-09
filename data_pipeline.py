@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import csv
+import random
 from pathlib import Path
 
 import torch
+import torchvision.transforms.functional as TF
 from torch.utils.data import Dataset
 
 from preprocess import CODE_LENGTH, IMAGE_SIZE, encode_code, load_image
@@ -56,6 +58,27 @@ class SealDataset(Dataset):
     def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
         path, target = self.samples[index]
         image = load_image(path, IMAGE_SIZE)
-        if self.augment and torch.rand(()) < 0.5:
-            image = torch.clamp(image + torch.randn_like(image) * 0.02, 0.0, 1.0)
+        if self.augment:
+            image = self._augment(image)
         return image, target
+
+    @staticmethod
+    def _augment(image: torch.Tensor) -> torch.Tensor:
+        # Small, realistic variations only: strong distortions would change
+        # what digit a crop actually shows.
+        if torch.rand(()) < 0.5:
+            image = TF.affine(
+                image,
+                angle=random.uniform(-5, 5),
+                translate=(random.uniform(-5, 5), random.uniform(-5, 5)),
+                scale=random.uniform(0.95, 1.05),
+                shear=0.0,
+                fill=0.0,
+            )
+        if torch.rand(()) < 0.5:
+            image = TF.adjust_brightness(image, random.uniform(0.8, 1.2))
+        if torch.rand(()) < 0.5:
+            image = TF.adjust_contrast(image, random.uniform(0.8, 1.2))
+        if torch.rand(()) < 0.5:
+            image = torch.clamp(image + torch.randn_like(image) * 0.02, 0.0, 1.0)
+        return image
