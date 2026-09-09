@@ -129,7 +129,11 @@ def segment_digits(image_path: str | Path, code_length: int = CODE_LENGTH) -> li
 	best_group.sort(key=lambda c: abs(c[3] - median_h))
 	chosen = sorted(best_group[:code_length], key=lambda c: c[0])
 
-	return [clean[y : y + h, x : x + w] for x, y, w, h in chosen]
+	# Crop from the pre-morphology mask: OPEN/CLOSE are only needed to get
+	# clean, well-separated components for detection, but at small digit
+	# scales they can erode thin strokes or seal shut a "0"/"6"'s hole --
+	# exactly the detail that tells digits apart.
+	return [binary[y : y + h, x : x + w] for x, y, w, h in chosen]
 
 
 class SealCodeClassical:
