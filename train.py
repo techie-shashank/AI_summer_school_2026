@@ -55,6 +55,16 @@ def main() -> None:
 	parser.add_argument("--batch-size", type=int)
 	parser.add_argument("--learning-rate", type=float)
 	parser.add_argument("--device", choices=("cpu", "gpu"))
+	parser.add_argument(
+		"--crop-to-digits",
+		action="store_true",
+		help="Train on photos cropped to the digit row (via the classical approach's segmentation) instead of the full frame",
+	)
+	parser.add_argument(
+		"--resume",
+		action="store_true",
+		help="Continue training from the existing checkpoint at --output, if present",
+	)
 	args = parser.parse_args()
 	config = load_config(args.config)
 	config_root = args.config.resolve().parent
@@ -63,7 +73,10 @@ def main() -> None:
 		args.manifest_root or config.get("manifest_root", "data/splits/split_seals"),
 		config_root,
 	)
-	output = config_path(args.output or config.get("checkpoint", "artifacts/seal_code_cnn.pt"), config_root)
+	default_checkpoint = "artifacts/seal_code_cnn_cropped.pt" if args.crop_to_digits else config.get(
+		"checkpoint", "artifacts/seal_code_cnn.pt"
+	)
+	output = config_path(args.output or default_checkpoint, config_root)
 	train_samples = args.train_samples if args.train_samples is not None else config.get("train_samples")
 	validation_samples = (
 		args.validation_samples
@@ -75,14 +88,31 @@ def main() -> None:
 	learning_rate = args.learning_rate if args.learning_rate is not None else config.get("learning_rate", 1e-3)
 	device = resolve_device(args.device or config.get("device", "gpu"))
 
-	train_set = SealDataset(manifest_root / "train.csv", data_root / "train", augment=True, max_samples=train_samples)
-	val_set = SealDataset(manifest_root / "val.csv", data_root / "val", max_samples=validation_samples)
+	train_set = SealDataset(
+		manifest_root / "train.csv",
+		data_root / "train",
+		augment=True,
+		max_samples=train_samples,
+		crop_to_digits=args.crop_to_digits,
+	)
+	val_set = SealDataset(
+		manifest_root / "val.csv",
+		data_root / "val",
+		max_samples=validation_samples,
+		crop_to_digits=args.crop_to_digits,
+	)
 	train_loader = DataLoader(train_set, batch_size, shuffle=True)
 	val_loader = DataLoader(val_set, batch_size, shuffle=False)
 	model = SealCodeCNN(CODE_LENGTH).to(device)
 	optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 	criterion = nn.CrossEntropyLoss()
 	best_exact = -1.0
+
+	if args.resume and output.is_file():
+		checkpoint_data = torch.load(output, map_location=device, weights_only=True)
+		model.load_state_dict(checkpoint_data["model"])
+		_, _, best_exact = run_epoch(model, val_loader, criterion, device)
+		print(f"Resumed from {output} (starting val exact accuracy {best_exact:.3%})")
 
 	print(f"Training on {device} with {len(train_set)} train and {len(val_set)} validation samples")
 	for epoch in range(1, epochs + 1):

@@ -18,10 +18,12 @@ class SealDataset(Dataset):
         image_dir: str | Path,
         augment: bool = False,
         max_samples: int | None = None,
+        crop_to_digits: bool = False,
     ) -> None:
         self.manifest = Path(manifest)
         self.image_dir = Path(image_dir)
         self.augment = augment
+        self.crop_to_digits = crop_to_digits
         if max_samples is not None and max_samples <= 0:
             raise ValueError("max_samples must be positive or None")
         if not self.manifest.exists():
@@ -57,7 +59,12 @@ class SealDataset(Dataset):
 
     def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
         path, target = self.samples[index]
-        image = load_image(path, IMAGE_SIZE)
+        if self.crop_to_digits:
+            from models.classical import CROPPED_IMAGE_SIZE, load_cropped_image
+
+            image = load_cropped_image(path, CROPPED_IMAGE_SIZE)
+        else:
+            image = load_image(path, IMAGE_SIZE)
         if self.augment:
             image = self._augment(image)
         return image, target

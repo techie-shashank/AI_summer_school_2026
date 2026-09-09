@@ -7,12 +7,13 @@ from typing import Optional
 
 import cv2
 import numpy as np
+import torch
 from skimage.feature import hog
 from sklearn.metrics import accuracy_score
 from sklearn.model_selection import train_test_split
 from sklearn.svm import SVC
 
-from preprocess import CODE_LENGTH
+from preprocess import CODE_LENGTH, letterbox
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -22,6 +23,8 @@ DEFAULT_DIGIT_DATASET = ROOT / "data" / "ground_truth_chars_balanced"
 DEFAULT_SEAL_MANIFEST = ROOT / "data" / "splits" / "split_seals" / "train.csv"
 DEFAULT_SEAL_IMAGE_DIR = ROOT / "data" / "train"
 DIGIT_EXTENSIONS = {".tif", ".tiff", ".png", ".jpg", ".jpeg"}
+CROPPED_IMAGE_SIZE = (256, 64)  # width, height -- matches the digit row's aspect ratio
+CROP_PADDING = 12
 
 
 def normalize_digit(digit: np.ndarray, size: int = DIGIT_CANVAS_SIZE) -> np.ndarray:
@@ -64,12 +67,17 @@ def extract_features(digit: np.ndarray) -> np.ndarray:
 	)
 
 
-def segment_digits(image_path: str | Path, code_length: int = CODE_LENGTH) -> list[np.ndarray]:
+def find_digit_boxes(
+	image_path: str | Path, code_length: int = CODE_LENGTH
+) -> tuple[np.ndarray, list[tuple[int, int, int, int]]]:
 	"""Locate the row of `code_length` digits stamped on a seal photo.
 
 	Digits are the only components that share both a similar height (same
 	font/size) and appear in a horizontal row; other seal artwork (logos,
 	borders, other text) reliably differs in one of those two ways.
+
+	Returns the pre-morphology binary mask and each digit's (x, y, w, h)
+	box, sorted left to right.
 	"""
 	image = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE)
 	if image is None:
@@ -129,11 +137,53 @@ def segment_digits(image_path: str | Path, code_length: int = CODE_LENGTH) -> li
 	best_group.sort(key=lambda c: abs(c[3] - median_h))
 	chosen = sorted(best_group[:code_length], key=lambda c: c[0])
 
-	# Crop from the pre-morphology mask: OPEN/CLOSE are only needed to get
-	# clean, well-separated components for detection, but at small digit
-	# scales they can erode thin strokes or seal shut a "0"/"6"'s hole --
-	# exactly the detail that tells digits apart.
+	return binary, chosen
+
+
+def segment_digits(image_path: str | Path, code_length: int = CODE_LENGTH) -> list[np.ndarray]:
+	"""Crop each of the `code_length` digits located by `find_digit_boxes`.
+
+	Crops from the pre-morphology mask: OPEN/CLOSE are only needed to get
+	clean, well-separated components for detection, but at small digit
+	scales they can erode thin strokes or seal shut a "0"/"6"'s hole --
+	exactly the detail that tells digits apart.
+	"""
+	binary, chosen = find_digit_boxes(image_path, code_length)
 	return [binary[y : y + h, x : x + w] for x, y, w, h in chosen]
+
+
+def load_cropped_image(
+	image_path: str | Path,
+	size: tuple[int, int] = CROPPED_IMAGE_SIZE,
+	padding: int = CROP_PADDING,
+) -> torch.Tensor:
+	"""Load a seal photo cropped tightly around its digit row.
+
+	Feeding a neural network the small region that actually contains the
+	code -- instead of the whole photo shrunk down -- lets it work with far
+	more effective resolution on the part that matters. Falls back to the
+	full, uncropped frame when the digit row can't be located, so this
+	always returns a usable, fixed-size tensor.
+	"""
+	image = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE)
+	if image is None:
+		raise FileNotFoundError(f"Could not read image: {image_path}")
+
+	try:
+		_, boxes = find_digit_boxes(image_path)
+	except ValueError:
+		boxes = None
+
+	if boxes:
+		height, width = image.shape
+		x0 = max(0, min(x for x, y, w, h in boxes) - padding)
+		y0 = max(0, min(y for x, y, w, h in boxes) - padding)
+		x1 = min(width, max(x + w for x, y, w, h in boxes) + padding)
+		y1 = min(height, max(y + h for x, y, w, h in boxes) + padding)
+		image = image[y0:y1, x0:x1]
+
+	resized = letterbox(image, size)
+	return torch.from_numpy(resized.astype(np.float32) / 255.0).unsqueeze(0)
 
 
 class SealCodeClassical:
