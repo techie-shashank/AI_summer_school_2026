@@ -13,6 +13,7 @@ from preprocess import CODE_LENGTH, decode_code, load_image
 
 
 ROOT = Path(__file__).resolve().parent
+TEAM_NAME = "PinkOps"
 
 
 def predict_cnn(images: list[Path], args: argparse.Namespace, config: dict, config_root: Path) -> list[str]:
@@ -52,7 +53,7 @@ def main() -> None:
 	parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
 	parser.add_argument("--checkpoint", type=Path)
 	parser.add_argument("--device", choices=("cpu", "gpu"))
-	parser.add_argument("--output-name", default="predictions.csv")
+	parser.add_argument("--output-name", default=f"{TEAM_NAME}.csv")
 	args = parser.parse_args()
 
 	images = sorted(args.input_dir.glob("*.png"))
