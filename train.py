@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import datetime
+import os
 from pathlib import Path
 
 import torch
@@ -65,6 +67,19 @@ def main() -> None:
 		action="store_true",
 		help="Continue training from the existing checkpoint at --output, if present",
 	)
+	parser.add_argument(
+		"--num-workers",
+		type=int,
+		default=min(8, os.cpu_count() or 1),
+		help="Parallel data-loading processes; loads the next batch while the GPU is busy with the current one",
+	)
+	parser.add_argument(
+		"--backup-every",
+		type=int,
+		default=5,
+		help="Save a timestamped backup copy of the checkpoint every N epochs (0 disables). "
+		"Backups never overwrite each other or the main checkpoint.",
+	)
 	args = parser.parse_args()
 	config = load_config(args.config)
 	config_root = args.config.resolve().parent
@@ -101,8 +116,12 @@ def main() -> None:
 		max_samples=validation_samples,
 		crop_to_digits=args.crop_to_digits,
 	)
-	train_loader = DataLoader(train_set, batch_size, shuffle=True)
-	val_loader = DataLoader(val_set, batch_size, shuffle=False)
+	loader_kwargs = {
+		"num_workers": args.num_workers,
+		"persistent_workers": args.num_workers > 0,
+	}
+	train_loader = DataLoader(train_set, batch_size, shuffle=True, **loader_kwargs)
+	val_loader = DataLoader(val_set, batch_size, shuffle=False, **loader_kwargs)
 	model = SealCodeCNN(CODE_LENGTH).to(device)
 	optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 	criterion = nn.CrossEntropyLoss()
@@ -113,6 +132,9 @@ def main() -> None:
 		model.load_state_dict(checkpoint_data["model"])
 		_, _, best_exact = run_epoch(model, val_loader, criterion, device)
 		print(f"Resumed from {output} (starting val exact accuracy {best_exact:.3%})")
+
+	backup_dir = output.parent / "backups"
+	run_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
 	print(f"Training on {device} with {len(train_set)} train and {len(val_set)} validation samples")
 	for epoch in range(1, epochs + 1):
@@ -127,6 +149,14 @@ def main() -> None:
 			output.parent.mkdir(parents=True, exist_ok=True)
 			torch.save({"model": model.state_dict(), "code_length": CODE_LENGTH}, output)
 			print(f"Saved best checkpoint to {output}")
+		if args.backup_every and epoch % args.backup_every == 0:
+			backup_dir.mkdir(parents=True, exist_ok=True)
+			backup_path = backup_dir / f"{output.stem}_{run_id}_epoch{epoch:03d}.pt"
+			torch.save(
+				{"model": model.state_dict(), "code_length": CODE_LENGTH, "val_exact": val_exact},
+				backup_path,
+			)
+			print(f"Backed up checkpoint to {backup_path}")
 
 
 if __name__ == "__main__":
