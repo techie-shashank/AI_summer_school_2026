@@ -80,6 +80,12 @@ def main() -> None:
 		help="Save a timestamped backup copy of the checkpoint every N epochs (0 disables). "
 		"Backups never overwrite each other or the main checkpoint.",
 	)
+	parser.add_argument(
+		"--include-test",
+		action="store_true",
+		help="Also train on the test split (test.csv + data/test) in addition to train.csv. "
+		"Only do this once test.csv is no longer needed as a held-out evaluation set.",
+	)
 	args = parser.parse_args()
 	config = load_config(args.config)
 	config_root = args.config.resolve().parent
@@ -103,9 +109,15 @@ def main() -> None:
 	learning_rate = args.learning_rate if args.learning_rate is not None else config.get("learning_rate", 1e-3)
 	device = resolve_device(args.device or config.get("device", "gpu"))
 
+	train_manifests = [manifest_root / "train.csv"]
+	train_image_dirs = [data_root / "train"]
+	if args.include_test:
+		train_manifests.append(manifest_root / "test.csv")
+		train_image_dirs.append(data_root / "test")
+
 	train_set = SealDataset(
-		manifest_root / "train.csv",
-		data_root / "train",
+		train_manifests,
+		train_image_dirs,
 		augment=True,
 		max_samples=train_samples,
 		crop_to_digits=args.crop_to_digits,
