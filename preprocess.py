@@ -29,17 +29,19 @@ def letterbox(image: np.ndarray, size: tuple[int, int] = IMAGE_SIZE) -> np.ndarr
 	return canvas
 
 
-def load_image(path: str | Path, size: tuple[int, int] = IMAGE_SIZE, retries: int = 3) -> torch.Tensor:
+def load_image(path: str | Path, size: tuple[int, int] = IMAGE_SIZE, retries: int = 8) -> torch.Tensor:
 	# Reads occasionally fail transiently (e.g. a file still being synced
 	# from cloud storage) even though the file is fine moments later, so
-	# retry a few times before giving up rather than crashing training.
+	# retry with backoff before giving up rather than crashing training.
+	# With several parallel DataLoader workers hitting the disk at once,
+	# a single stall can take longer than a couple quick retries cover.
 	image = None
 	for attempt in range(retries):
 		image = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
 		if image is not None:
 			break
 		if attempt < retries - 1:
-			time.sleep(1.0)
+			time.sleep(min(2.0 ** attempt, 15.0))
 	if image is None:
 		raise FileNotFoundError(f"Could not read image: {path}")
 	image = letterbox(image, size)
