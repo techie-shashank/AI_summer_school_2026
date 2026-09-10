@@ -19,11 +19,15 @@ All three approaches described in the assignment are implemented:
 	a structured response format, a plausibility check (exactly 7 digits),
 	and an optional majority vote across repeated queries.
 - **Classical** ([models/classical.py](models/classical.py)): locates the 7
-	digits with Otsu thresholding and connected-component analysis grouped by
-	matching height, describes each digit with HOG features, and classifies
+	digits with normal/inverse Otsu and adaptive thresholding, then uses
+	connected-component analysis grouped by matching height, describes each digit with HOG features, and classifies
 	them with an SVM trained on both a clean reference digit set
 	(`data/ground_truth_chars_balanced`) and digits self-labeled by
 	segmenting real seal photos with a known code.
+- **Segmented-digit CNN** ([models/digit_cnn.py](models/digit_cnn.py), trained
+	via [train_digit.py](train_digit.py)): segments the seven digits from a seal,
+	classifies each crop with one reusable ten-class CNN, and joins the predictions
+	from left to right.
 
 An experimental fourth variant — the same CNN architecture trained on a crop
 of just the digit row instead of the whole photo (`train.py
@@ -195,6 +199,38 @@ segments all seal photos in the training split to self-label additional
 digit crops, fits an SVM, and saves it to
 `artifacts/classical_digit_svm.pkl`.
 
+## Training the Segmented-Digit CNN
+
+This alternative CNN is trained by segmenting labeled seal photos from
+`data/train`, then pairing each crop with the corresponding digit from the seal
+manifest. This matches the images the model receives during inference. The
+clean individually labeled images in `data/ground_truth_chars_balanced` remain
+available as an optional training source.
+
+Train it with:
+
+```bash
+python train_digit.py --config config.json
+```
+
+The relevant configuration keys are:
+
+```json
+{
+	"digit_dataset_root": "data/ground_truth_chars_balanced",
+	"digit_checkpoint": "artifacts/digit_cnn.pt",
+	"digit_source": "seal",
+	"digit_samples": null,
+	"digit_epochs": 10
+}
+```
+
+Set `digit_samples` to an integer for a quick smoke run or `null` to use all
+available source images. Set `digit_source` to `clean` for the reference digit
+dataset or `mixed` to combine both sources. The digit training command creates
+an internal, deterministic 80/20 crop split and saves the checkpoint with the
+best validation digit accuracy.
+
 ## VLM Setup
 
 The VLM approach needs credentials for either the KKY Ollama server or
@@ -216,20 +252,61 @@ loads it automatically via `python-dotenv`.
 
 ## Evaluation
 
-Evaluate a saved CNN checkpoint on the available validation images:
+`evaluation.py` supports every recognition approach through `--approach`.
+All approaches are compared against the ground-truth codes in the validation
+manifest and report valid predictions, exact-code accuracy, and inference-time
+statistics.
+
+Benchmark all approaches in one run:
 
 ```bash
-python evaluation.py --config config.json
+python evaluation.py --approach all --config config.json
 ```
+
+This prints a comparison table containing exact-code accuracy, valid
+predictions, average latency, and throughput. Missing checkpoints are reported
+as unavailable and do not stop the other approaches from being benchmarked.
+While each approach runs, progress is printed approximately every 10% with the
+number of processed images, elapsed time, and current average time per image.
+
+Evaluate the whole-image CNN:
+
+```bash
+python evaluation.py --approach cnn --config config.json
+```
+
+Evaluate the segmented-digit CNN:
+
+```bash
+python evaluation.py --approach digit-cnn --config config.json
+```
+
+Evaluate the classical SVM approach after creating its classifier checkpoint:
+
+```bash
+python evaluation.py --approach classical --config config.json
+```
+
+Evaluate the VLM approach using the configured Ollama backend:
+
+```bash
+python evaluation.py --approach vlm --config config.json
+```
+
+Add `--voting` to query the VLM three times per image. VLM evaluation requires
+network access and the credentials described in [VLM Setup](#vlm-setup).
 
 The evaluator reports:
 
-- `Digit accuracy`: percentage of correctly predicted individual digits;
 - `Exact-code accuracy`: percentage of samples where all seven digits are
 	correct;
+- total, average, minimum, and maximum inference time;
+- inference throughput in images per second;
 - several example errors.
 
 Custom validation paths can be supplied with `--manifest` and `--image-dir`.
+Use `--validation-samples` to limit one evaluation run without editing the
+configuration file. Use `--device cpu` to force CPU inference.
 
 ## Inference
 
@@ -242,9 +319,24 @@ python main.py \
 	--approach cnn
 ```
 
-`--approach` selects `cnn` (default) or `vlm`. For the VLM approach, add
+`--approach` selects `cnn` (default), `digit-cnn`, or `vlm`. The `digit-cnn`
+approach requires a trained `digit_cnn.pt` checkpoint and uses classical
+segmentation before classification. For the VLM approach, add
 `--voting` to query the model three times per image and keep the majority
 answer (slower, more accurate).
+
+Run the segmented-digit CNN with:
+
+```bash
+python main.py \
+	--approach digit-cnn \
+	--input-dir data/val \
+	--output-dir artifacts \
+	--config config.json
+```
+
+If segmentation cannot find seven digits, the image receives an empty code in
+the output CSV and a warning is printed.
 
 This creates `artifacts/PinkOps.csv` with semicolon-separated columns:
 
@@ -283,10 +375,14 @@ check is a one-epoch training run followed by evaluation.
 preprocess.py           Image preprocessing and code encoding
 data_pipeline.py        Manifest-backed PyTorch dataset (whole-image or cropped)
 models/cnn.py           Baseline CNN model
+models/digit_cnn.py    Single-digit CNN model
 models/vlm.py           Vision-language-model recognition
 models/classical.py     Classical image-processing + SVM recognition
 llm/common_llm.py        OpenAI / KKY Ollama API helpers used by models/vlm.py
+inference.py            Shared prediction and timing logic for all approaches
 train.py                Training and validation loop for the CNN
+train_digit.py          Training loop for the single-digit CNN
+digit_pipeline.py       Digit dataset and segmentation-crop utilities
 evaluation.py           Validation metrics and example errors
 main.py                 Batch inference and CSV generation
 requirements.txt        Python dependencies

@@ -92,36 +92,27 @@ def extract_features(digit: np.ndarray) -> np.ndarray:
 	return np.concatenate([hog_features, _hole_features(normalized)])
 
 
-def find_digit_boxes(
-	image_path: str | Path, code_length: int = CODE_LENGTH
+def _threshold_candidates(
+	image: np.ndarray, threshold_type: int, adaptive_block: int | None = None, adaptive_c: int = 5
 ) -> tuple[np.ndarray, list[tuple[int, int, int, int]]]:
-	"""Locate the row of `code_length` digits stamped on a seal photo.
-
-	Digits are the only components that share both a similar height (same
-	font/size) and appear in a horizontal row; other seal artwork (logos,
-	borders, other text) reliably differs in one of those two ways.
-
-	Returns the pre-morphology binary mask and each digit's (x, y, w, h)
-	box, sorted left to right.
-	"""
-	image = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE)
-	if image is None:
-		raise FileNotFoundError(f"Could not read image: {image_path}")
-
-	blurred = cv2.GaussianBlur(image, (5, 5), 0)
-	_, binary = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+	if adaptive_block is None:
+		blurred = cv2.GaussianBlur(image, (5, 5), 0)
+		_, binary = cv2.threshold(blurred, 0, 255, threshold_type + cv2.THRESH_OTSU)
+	else:
+		binary = cv2.adaptiveThreshold(
+			image,
+			255,
+			cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+			threshold_type,
+			adaptive_block,
+			adaptive_c,
+		)
 	kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
 	clean = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
 	clean = cv2.morphologyEx(clean, cv2.MORPH_CLOSE, kernel)
 
 	num_labels, _, stats, _ = cv2.connectedComponentsWithStats(clean, connectivity=8)
 	image_area = image.shape[0] * image.shape[1]
-
-	# Digits can appear at very different scales depending on how close the
-	# seal was photographed, so we filter by shape (tall and narrow, like a
-	# digit) rather than an absolute pixel area; only drop specks (noise)
-	# and huge blobs (background artwork), then let the height-grouping
-	# below find the actual row of matching-size digits.
 	candidates = []
 	for i in range(1, num_labels):
 		x, y, w, h, area = stats[i]
@@ -130,38 +121,88 @@ def find_digit_boxes(
 		if h <= w or h > 8 * w:
 			continue
 		candidates.append((x, y, w, h))
+	return binary, candidates
 
-	if len(candidates) < code_length:
-		raise ValueError(
-			f"Found only {len(candidates)} digit-like components in {image_path}, need {code_length}"
-		)
 
-	# Group components with similar height; unrelated seal artwork rarely
-	# matches the digits' height closely enough to land in the same group.
-	candidates.sort(key=lambda c: c[3])
+def _select_digit_row(
+	candidates: list[tuple[int, int, int, int]], code_length: int
+) -> list[tuple[int, int, int, int]]:
+	"""Select similarly sized, vertically aligned components as one digit row."""
 	best_group: list[tuple[int, int, int, int]] = []
-	group = [candidates[0]]
-	for c in candidates[1:]:
-		if c[3] <= group[-1][3] * 1.15:
-			group.append(c)
-		else:
-			if len(group) > len(best_group):
-				best_group = group
-			group = [c]
-	if len(group) > len(best_group):
-		best_group = group
+	best_key = (-1, float("-inf"), float("-inf"))
+	for seed in candidates:
+		seed_height = seed[3]
+		height_group = [candidate for candidate in candidates if 1 / 1.25 <= candidate[3] / seed_height <= 1.25]
+		median_height = float(np.median([candidate[3] for candidate in height_group]))
+		y_centers = [candidate[1] + candidate[3] / 2 for candidate in height_group]
+		median_y = float(np.median(y_centers))
+		row = [
+			candidate
+			for candidate in height_group
+			if abs(candidate[1] + candidate[3] / 2 - median_y) <= 0.35 * median_height
+		]
+		if len(row) < code_length:
+			continue
+		y_spread = max(candidate[1] + candidate[3] / 2 for candidate in row) - min(
+			candidate[1] + candidate[3] / 2 for candidate in row
+		)
+		height_spread = max(candidate[3] for candidate in row) - min(candidate[3] for candidate in row)
+		key = (len(row), -y_spread, -height_spread)
+		if key > best_key:
+			best_group = row
+			best_key = key
 
 	if len(best_group) < code_length:
-		raise ValueError(
-			f"Could not find a row of {code_length} similarly sized digits in {image_path}"
-		)
+		raise ValueError(f"Could not find a row of {code_length} similarly sized digits")
 
-	# If more than `code_length` boxes made it into the group, keep the ones
-	# closest to the group's median height, then order them left to right.
-	median_h = sorted(c[3] for c in best_group)[len(best_group) // 2]
-	best_group.sort(key=lambda c: abs(c[3] - median_h))
-	chosen = sorted(best_group[:code_length], key=lambda c: c[0])
+	median_height = float(np.median([candidate[3] for candidate in best_group]))
+	best_group.sort(key=lambda candidate: abs(candidate[3] - median_height))
+	return sorted(best_group[:code_length], key=lambda candidate: candidate[0])
 
+
+def find_digit_boxes(
+	image_path: str | Path, code_length: int = CODE_LENGTH
+) -> tuple[np.ndarray, list[tuple[int, int, int, int]]]:
+	"""Locate the row of `code_length` digits stamped on a seal photo.
+
+	Digits are the only components that share both a similar height (same
+	font/size) and appear in a horizontal row; other seal artwork (logos,
+	borders, other text) reliably differs in one of those two ways. Both
+	normal and inverse threshold polarity are tried, together with an
+	adaptive-threshold fallback for uneven illumination.
+
+	Returns the pre-morphology binary mask and each digit's (x, y, w, h)
+	box, sorted left to right.
+	"""
+	image = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE)
+	if image is None:
+		raise FileNotFoundError(f"Could not read image: {image_path}")
+
+	options = []
+	thresholds = [
+		(threshold_type, None, 5)
+		for threshold_type in (cv2.THRESH_BINARY, cv2.THRESH_BINARY_INV)
+	]
+	thresholds.extend(
+		(threshold_type, 81, 7)
+		for threshold_type in (cv2.THRESH_BINARY, cv2.THRESH_BINARY_INV)
+	)
+	for threshold_type, adaptive_block, adaptive_c in thresholds:
+		binary, candidates = _threshold_candidates(image, threshold_type, adaptive_block, adaptive_c)
+		try:
+			chosen = _select_digit_row(candidates, code_length)
+			median_height = float(np.median([h for x, y, w, h in chosen]))
+			y_spread = max(y + h / 2 for x, y, w, h in chosen) - min(
+				y + h / 2 for x, y, w, h in chosen
+			)
+			options.append((len(chosen), median_height, -y_spread, binary, chosen))
+		except ValueError:
+			continue
+
+	if not options:
+		raise ValueError(f"Could not find a row of {code_length} similarly sized digits in {image_path}")
+
+	_, _, _, binary, chosen = max(options, key=lambda option: option[:3])
 	return binary, chosen
 
 
