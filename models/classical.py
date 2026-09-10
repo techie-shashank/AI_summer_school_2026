@@ -11,6 +11,7 @@ import torch
 from skimage.feature import hog
 from sklearn.metrics import accuracy_score
 from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
 
 from preprocess import CODE_LENGTH, letterbox
@@ -55,16 +56,40 @@ def normalize_digit(digit: np.ndarray, size: int = DIGIT_CANVAS_SIZE) -> np.ndar
 	return canvas
 
 
+def _hole_features(normalized: np.ndarray) -> np.ndarray:
+	"""Number of enclosed holes and their average vertical position
+	(0 = top, 1 = bottom). This is the feature that most reliably tells
+	apart visually similar digits that HOG alone confuses -- e.g. 0 vs 6
+	vs 8 vs 9 differ mainly in how many holes they have and where (see the
+	assignment's "Topological Features" section).
+	"""
+	contours, hierarchy = cv2.findContours(normalized, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+	if hierarchy is None:
+		return np.array([0.0, 0.5], dtype=np.float32)
+	holes = [
+		contours[i]
+		for i, h in enumerate(hierarchy[0])
+		if h[3] != -1 and cv2.contourArea(contours[i]) > 4
+	]
+	if not holes:
+		return np.array([0.0, 0.5], dtype=np.float32)
+	moments = [cv2.moments(c) for c in holes]
+	ys = [m["m01"] / m["m00"] for m in moments if m["m00"] > 0]
+	hole_y = (sum(ys) / len(ys) / normalized.shape[0]) if ys else 0.5
+	return np.array([len(holes), hole_y], dtype=np.float32)
+
+
 def extract_features(digit: np.ndarray) -> np.ndarray:
-	"""Histogram-of-Oriented-Gradients features for one normalized digit."""
+	"""HOG shape descriptor combined with hole-count/position features."""
 	normalized = normalize_digit(digit)
-	return hog(
+	hog_features = hog(
 		normalized,
 		orientations=9,
 		pixels_per_cell=(8, 8),
 		cells_per_block=(2, 2),
 		feature_vector=True,
 	)
+	return np.concatenate([hog_features, _hole_features(normalized)])
 
 
 def find_digit_boxes(
@@ -193,7 +218,9 @@ class SealCodeClassical:
 
 	def __init__(self, classifier_path: str | Path = DEFAULT_CLASSIFIER_PATH) -> None:
 		with open(classifier_path, "rb") as handle:
-			self.classifier = pickle.load(handle)
+			saved = pickle.load(handle)
+		self.scaler = saved["scaler"]
+		self.classifier = saved["classifier"]
 
 	def predict(self, image_path: str | Path) -> Optional[str]:
 		try:
@@ -201,6 +228,7 @@ class SealCodeClassical:
 		except ValueError:
 			return None
 		features = np.stack([extract_features(digit) for digit in digits])
+		features = self.scaler.transform(features)
 		predictions = self.classifier.predict(features)
 		return "".join(str(label) for label in predictions)
 
@@ -273,7 +301,15 @@ def train_classifier(
 	x_train, x_val, y_train, y_val = train_test_split(
 		features, labels, test_size=0.2, stratify=labels, random_state=42
 	)
-	classifier = SVC(kernel="rbf", C=10, gamma="scale")
+
+	# HOG has ~324 dimensions vs. the hole-count features' 2, so without
+	# scaling the SVM's distance metric is dominated by HOG alone. A linear
+	# kernel is also what the assignment recommends pairing with HOG.
+	scaler = StandardScaler()
+	x_train = scaler.fit_transform(x_train)
+	x_val = scaler.transform(x_val)
+
+	classifier = SVC(kernel="linear", C=1.0)
 	classifier.fit(x_train, y_train)
 	accuracy = accuracy_score(y_val, classifier.predict(x_val))
 	print(f"Validation accuracy on held-out digits: {accuracy:.3%}")
@@ -281,7 +317,7 @@ def train_classifier(
 	output_path = Path(output_path)
 	output_path.parent.mkdir(parents=True, exist_ok=True)
 	with output_path.open("wb") as handle:
-		pickle.dump(classifier, handle)
+		pickle.dump({"scaler": scaler, "classifier": classifier}, handle)
 	print(f"Saved digit classifier to {output_path}")
 
 
