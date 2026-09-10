@@ -71,12 +71,13 @@ class SealDataset(Dataset):
 
     @staticmethod
     def _augment(image: torch.Tensor) -> torch.Tensor:
-        # Small, realistic variations only: strong distortions would change
-        # what digit a crop actually shows.
+        # Rotation range widened from +/-5 to +/-20 degrees: real photos
+        # (e.g. the professor's held-out set) showed camera-angle tilt well
+        # beyond +/-5, which the model had never been trained to handle.
         if torch.rand(()) < 0.5:
             image = TF.affine(
                 image,
-                angle=random.uniform(-5, 5),
+                angle=random.uniform(-20, 20),
                 translate=(random.uniform(-5, 5), random.uniform(-5, 5)),
                 scale=random.uniform(0.95, 1.05),
                 shear=0.0,
