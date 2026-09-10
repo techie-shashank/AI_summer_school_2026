@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import cv2
@@ -28,8 +29,17 @@ def letterbox(image: np.ndarray, size: tuple[int, int] = IMAGE_SIZE) -> np.ndarr
 	return canvas
 
 
-def load_image(path: str | Path, size: tuple[int, int] = IMAGE_SIZE) -> torch.Tensor:
-	image = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+def load_image(path: str | Path, size: tuple[int, int] = IMAGE_SIZE, retries: int = 3) -> torch.Tensor:
+	# Reads occasionally fail transiently (e.g. a file still being synced
+	# from cloud storage) even though the file is fine moments later, so
+	# retry a few times before giving up rather than crashing training.
+	image = None
+	for attempt in range(retries):
+		image = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+		if image is not None:
+			break
+		if attempt < retries - 1:
+			time.sleep(1.0)
 	if image is None:
 		raise FileNotFoundError(f"Could not read image: {path}")
 	image = letterbox(image, size)
