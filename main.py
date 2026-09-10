@@ -13,8 +13,8 @@ TEAM_NAME = "PinkOps"
 
 
 def main() -> None:
-	parser = argparse.ArgumentParser(description="Predict numerical codes for seal images.")
-	parser.add_argument("--input-dir", type=Path, required=True)
+	parser = argparse.ArgumentParser(description="Predict numerical codes for seal images from the default test split.")
+	parser.add_argument("--input-dir", type=Path, help="Directory of seal images to predict. Defaults to the configured test split.")
 	parser.add_argument("--output-dir", type=Path, required=True)
 	parser.add_argument("--approach", choices=("cnn", "digit-cnn", "classical", "vlm"), default="cnn")
 	parser.add_argument(
@@ -25,16 +25,22 @@ def main() -> None:
 	parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
 	parser.add_argument("--checkpoint", type=Path)
 	parser.add_argument("--device", choices=("cpu", "gpu"))
+	parser.add_argument("--split", choices=("test", "val"), default="test", help="Default image directory when --input-dir is not provided")
 	parser.add_argument("--output-name", default=f"{TEAM_NAME}.csv")
 	args = parser.parse_args()
 
-	images = sorted(args.input_dir.glob("*.png"))
 	config = load_config(args.config)
+	config_root = args.config.resolve().parent
+	data_root = Path(config.get("data_root", "data"))
+	input_dir = args.input_dir or config_root / data_root / args.split
+	images = sorted(input_dir.glob("*.png"))
+	if not images:
+		raise FileNotFoundError(f"No PNG images found in {input_dir}; set --input-dir or --split to a populated dataset folder")
 	result = run_inference(
 		args.approach,
 		images,
 		config,
-		args.config.resolve().parent,
+		config_root,
 		checkpoint=args.checkpoint,
 		device_name=args.device,
 		batch_size=config.get("batch_size", 32),

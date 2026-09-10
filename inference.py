@@ -160,7 +160,29 @@ def run_inference(
         checkpoint_path = config_path(
             checkpoint or config.get("digit_checkpoint", "artifacts/digit_cnn.pt"), config_root
         )
-        return _predict_digit_cnn(images, checkpoint_path, device)
+        digit_result = _predict_digit_cnn(images, checkpoint_path, device)
+        failed_indexes = [index for index, prediction in enumerate(digit_result.predictions) if prediction is None]
+        if not failed_indexes:
+            return digit_result
+
+        cnn_checkpoint_path = config_path(
+            checkpoint or config.get("checkpoint", "artifacts/seal_code_cnn.pt"),
+            config_root,
+        )
+        fallback_images = [images[index] for index in failed_indexes]
+        fallback_result = _predict_cnn(fallback_images, cnn_checkpoint_path, batch_size, device)
+        merged_predictions = list(digit_result.predictions)
+        merged_times = list(digit_result.inference_times)
+        for failed_index, fallback_prediction in zip(failed_indexes, fallback_result.predictions):
+            merged_predictions[failed_index] = fallback_prediction
+        for failed_index, fallback_time in zip(failed_indexes, fallback_result.inference_times):
+            merged_times[failed_index] = fallback_time
+        print(
+            f"digit-cnn fallback: used whole-image CNN for {len(failed_indexes)}/{len(images)} images "
+            f"after digit segmentation or digit-CNN failure",
+            flush=True,
+        )
+        return PredictionResult(merged_predictions, merged_times)
     if approach == "classical":
         checkpoint_path = config_path(
             checkpoint or config.get("classical_checkpoint", "artifacts/classical_digit_svm.pkl"),

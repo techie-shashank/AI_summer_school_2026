@@ -70,7 +70,7 @@ def evaluate_predictions(targets, predictions, inference_times, show_examples=Tr
 
 
 def main() -> None:
-	parser = argparse.ArgumentParser(description="Evaluate a recognition approach on the validation set.")
+	parser = argparse.ArgumentParser(description="Evaluate a recognition approach on the test split by default.")
 	parser.add_argument(
 		"--approach",
 		choices=("cnn", "digit-cnn", "classical", "vlm", "all"),
@@ -81,7 +81,8 @@ def main() -> None:
 	parser.add_argument("--checkpoint", type=Path)
 	parser.add_argument("--manifest", type=Path)
 	parser.add_argument("--image-dir", type=Path)
-	parser.add_argument("--validation-samples", type=int)
+	parser.add_argument("--split", choices=("test", "val"), default="test", help="Dataset split to evaluate")
+	parser.add_argument("--validation-samples", type=int, help="Deprecated alias for limiting the evaluation samples on the selected split")
 	parser.add_argument("--batch-size", type=int)
 	parser.add_argument("--device", choices=("cpu", "gpu"))
 	parser.add_argument("--voting", action="store_true", help="Query the VLM three times per image")
@@ -90,13 +91,19 @@ def main() -> None:
 	config = load_config(args.config)
 	config_root = args.config.resolve().parent
 	manifest = config_path(
-		args.manifest or Path(config.get("manifest_root", "data/splits/split_seals")) / "val.csv",
+		args.manifest or Path(config.get("manifest_root", "data/splits/split_seals")) / f"{args.split}.csv",
 		config_root,
 	)
-	image_dir = config_path(args.image_dir or Path(config.get("data_root", "data")) / "val", config_root)
-	validation_samples = args.validation_samples if args.validation_samples is not None else config.get("validation_samples")
+	image_dir = config_path(args.image_dir or Path(config.get("data_root", "data")) / args.split, config_root)
+	split_samples = (
+		args.validation_samples
+		if args.validation_samples is not None
+		else config.get("test_samples")
+		if args.split == "test"
+		else config.get("validation_samples")
+	)
 	batch_size = args.batch_size if args.batch_size is not None else config.get("batch_size", 32)
-	rows = load_validation_rows(manifest, image_dir, validation_samples)
+	rows = load_validation_rows(manifest, image_dir, split_samples)
 	targets = [target for _, target in rows]
 	approaches = ("cnn", "digit-cnn", "classical", "vlm") if args.approach == "all" else (args.approach,)
 	benchmark = []
