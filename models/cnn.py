@@ -1,41 +1,54 @@
-from __future__ import annotations
-
 import torch
 from torch import nn
+import torchvision.models as models
 
 
 class SealCodeCNN(nn.Module):
-	"""Small baseline CNN that predicts each digit in a seal code."""
+    def __init__(self, code_length=7, classes=10):
+        super().__init__()
 
-	def __init__(self, code_length: int = 7, classes: int = 10) -> None:
-		super().__init__()
-		self.code_length = code_length
-		self.features = nn.Sequential(
-			nn.Conv2d(1, 16, kernel_size=5, padding=2),
-			nn.ReLU(inplace=True),
-			nn.MaxPool2d(2),
-			nn.Conv2d(16, 32, kernel_size=3, padding=1),
-			nn.ReLU(inplace=True),
-			nn.MaxPool2d(2),
-			nn.Conv2d(32, 64, kernel_size=3, padding=1),
-			nn.ReLU(inplace=True),
-		)
-		self.pool = nn.AdaptiveAvgPool2d((1, code_length))
-		self.classifier = nn.Sequential(
-			nn.Flatten(),
-			nn.Dropout(0.2),
-			nn.Linear(64 * code_length, code_length * classes),
-		)
-		self.classes = classes
+        backbone = models.resnet18(weights="IMAGENET1K_V1")
 
-	def forward(self, images: torch.Tensor) -> torch.Tensor:
-		features = self.features(images)
-		if features.device.type == "mps":
-			# AdaptiveAvgPool2d with a non-divisible output size isn't
-			# supported on MPS yet; the feature map is small at this point,
-			# so the CPU round-trip is cheap.
-			features = self.pool(features.cpu()).to(features.device)
-		else:
-			features = self.pool(features)
-		logits = self.classifier(features)
-		return logits.view(images.shape[0], self.code_length, self.classes)
+        # Convert first layer from RGB to grayscale
+        old_conv = backbone.conv1
+
+        backbone.conv1 = nn.Conv2d(
+            1,
+            old_conv.out_channels,
+            kernel_size=old_conv.kernel_size,
+            stride=old_conv.stride,
+            padding=old_conv.padding,
+            bias=False,
+        )
+
+        # Initialize grayscale conv from pretrained RGB weights
+        with torch.no_grad():
+            backbone.conv1.weight.copy_(
+                old_conv.weight.mean(dim=1, keepdim=True)
+            )
+
+        self.features = nn.Sequential(
+            *list(backbone.children())[:-2]
+        )
+
+        self.pool = nn.AdaptiveAvgPool2d((1, 1))
+
+        self.heads = nn.ModuleList([
+            nn.Linear(512, classes)
+            for _ in range(code_length)
+        ])
+
+        self.code_length = code_length
+        self.classes = classes
+
+    def forward(self, x):
+        x = self.features(x)
+        x = self.pool(x)
+        x = torch.flatten(x, 1)
+
+        logits = torch.stack(
+            [head(x) for head in self.heads],
+            dim=1
+        )
+
+        return logits

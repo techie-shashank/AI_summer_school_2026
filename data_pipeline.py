@@ -87,10 +87,10 @@ class SealDataset(Dataset):
         if torch.rand(()) < 0.5:
             image = TF.affine(
                 image,
-                angle=random.uniform(-30, 30),
+                angle=random.uniform(-20, 20),
                 translate=(random.uniform(-5, 5), random.uniform(-5, 5)),
                 scale=random.uniform(0.95, 1.05),
-                shear=0.0,
+                shear=random.uniform(-5, 5),
                 fill=0.0,
             )
         if torch.rand(()) < 0.5:

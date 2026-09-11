@@ -76,7 +76,7 @@ def main() -> None:
 	parser.add_argument(
 		"--backup-every",
 		type=int,
-		default=5,
+		default=10,
 		help="Save a timestamped backup copy of the checkpoint every N epochs (0 disables). "
 		"Backups never overwrite each other or the main checkpoint.",
 	)

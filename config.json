@@ -6,10 +6,10 @@
     "digit_checkpoint": "artifacts/digit_cnn.pt",
     "digit_source": "seal",
     "digit_samples": null,
-    "digit_epochs": 50,
+    "digit_epochs": 100,
     "train_samples": null,
     "validation_samples": null,
-    "epochs": 50,
+    "epochs": 100,
     "batch_size": 32,
     "learning_rate": 0.001,
     "device": "gpu"
