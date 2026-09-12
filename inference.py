@@ -12,6 +12,8 @@ from models.digit_cnn import DigitCNN
 from pipeline_config import config_path, resolve_device
 from preprocess import CODE_LENGTH, decode_code, load_image
 
+import torchvision.transforms.functional as TF
+
 
 @dataclass
 class PredictionResult:
@@ -38,32 +40,181 @@ def _progress(approach: str, processed: int, total: int, started: float) -> None
     )
 
 
+@torch.no_grad()
+def _cnn_predictions_with_confidence(
+    model: torch.nn.Module,
+    batch: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Returns:
+        predictions: [B, 7]
+        confidence:  [B, 7] - probability of predicted digit
+        margin:      [B, 7] - difference between top-1 and top-2 probabilities
+    """
+    logits = model(batch)
+    probabilities = torch.softmax(logits, dim=-1)
+
+    top2 = torch.topk(probabilities, k=2, dim=-1)
+
+    predictions = top2.indices[..., 0]
+    confidence = top2.values[..., 0]
+    margin = top2.values[..., 0] - top2.values[..., 1]
+
+    return predictions, confidence, margin
+
+
+def _needs_vlm(
+    predictions: torch.Tensor,
+    confidence: torch.Tensor,
+    margin: torch.Tensor,
+) -> torch.Tensor:
+    """
+    Returns a boolean tensor [B] indicating which images should be
+    checked by the VLM.
+    """
+
+    # Any digit with very low confidence.
+    low_confidence = (confidence < 0.93).any(dim=1)
+
+    # Any digit where the top prediction is very close to the runner-up.
+    low_margin = (margin < 0.15).any(dim=1)
+
+    return low_confidence | low_margin
+
+
 def _predict_cnn(
-    images: list[Path], checkpoint: Path, batch_size: int, device: torch.device
+    images: list[Path],
+    checkpoint: Path,
+    batch_size: int,
+    device: torch.device,
+    use_vlm: bool = True,
 ) -> PredictionResult:
     checkpoint_data = _load_checkpoint(checkpoint, device)
-    model = SealCodeCNN(checkpoint_data.get("code_length", CODE_LENGTH))
+
+    model = SealCodeCNN(
+        checkpoint_data.get("code_length", CODE_LENGTH)
+    )
     model.load_state_dict(checkpoint_data["model"])
     model.to(device).eval()
-    predictions: list[str] = []
+
+    vlm = None
+    if use_vlm:
+        from models.vlm import SealCodeVLM
+        vlm = SealCodeVLM(openai=False)
+
+    predictions: list[str | None] = []
     inference_times: list[float] = []
+
     started_total = time.perf_counter()
     progress_step = max(1, len(images) // 10)
+
+    vlm_count = 0
+
     with torch.no_grad():
         for start_index in range(0, len(images), batch_size):
             batch_paths = images[start_index : start_index + batch_size]
+
             started = time.perf_counter()
-            batch = torch.stack([load_image(path) for path in batch_paths]).to(device)
+
+            batch = torch.stack(
+                [load_image(path) for path in batch_paths]
+            ).to(device)
+
             _synchronize(device)
-            logits = model(batch)
+
+            # CNN prediction + confidence
+            cnn_digits, confidence, margin = (
+                _cnn_predictions_with_confidence(
+                    model,
+                    batch,
+                )
+            )
+
             _synchronize(device)
-            elapsed = (time.perf_counter() - started) / len(batch_paths)
-            predictions.extend(decode_code(prediction) for prediction in logits.argmax(dim=-1))
-            inference_times.extend([elapsed] * len(batch_paths))
+
+            batch_predictions = [
+                decode_code(digits)
+                for digits in cnn_digits
+            ]
+
+            if use_vlm:
+
+                # Which images look suspicious?
+                suspicious = _needs_vlm(
+                    cnn_digits,
+                    confidence,
+                    margin,
+                )
+
+                # VLM fallback for suspicious images
+                for local_index, is_suspicious in enumerate(
+                    suspicious.tolist()
+                ):
+
+                    image_path = batch_paths[local_index]
+
+                    print(
+                        f"CNN decision: {image_path.name} | "
+                        f"prediction={batch_predictions[local_index]} | "
+                        f"confidence={confidence[local_index].min().item():.2f} | "
+                        f"margin={margin[local_index].min().item():.2f} | "
+                        f"VLM={'YES' if is_suspicious else 'NO'}",
+                        flush=True,
+                    )
+                    
+                    if not is_suspicious:
+                        continue
+
+                    image_path = batch_paths[local_index]
+
+                    try:
+                        vlm_prediction = vlm.predict(image_path)
+
+                        if vlm_prediction is not None:
+                            batch_predictions[local_index] = vlm_prediction
+                            vlm_count += 1
+
+                    except Exception as error:
+                        print(
+                            f"Warning: VLM failed for "
+                            f"{image_path.name}: {error}"
+                        )
+
+            _synchronize(device)
+
+            elapsed = (
+                time.perf_counter() - started
+            ) / len(batch_paths)
+
+            predictions.extend(batch_predictions)
+            inference_times.extend(
+                [elapsed] * len(batch_paths)
+            )
+
             processed = start_index + len(batch_paths)
-            if processed % progress_step == 0 or processed == len(images):
-                _progress("cnn", processed, len(images), started_total)
-    return PredictionResult(predictions, inference_times)
+
+            if (
+                processed % progress_step == 0
+                or processed == len(images)
+            ):
+                _progress(
+                    "cnn+vlm",
+                    processed,
+                    len(images),
+                    started_total,
+                )
+
+    if use_vlm:
+        print(
+            f"CNN+VLM fallback: VLM used for "
+            f"{vlm_count}/{len(images)} images",
+            flush=True,
+        )
+
+    return PredictionResult(
+        predictions,
+        inference_times,
+    )
 
 
 def _predict_digit_cnn(
